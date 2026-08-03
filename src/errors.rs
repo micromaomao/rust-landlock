@@ -28,6 +28,8 @@ pub enum RulesetError {
     /// the syscall itself (e.g., EINVAL on an unsupported kernel).
     #[error(transparent)]
     RestrictSelfFlags(#[from] SyscallFlagError<RestrictSelfFlag>),
+    #[error("quiet flag is not supported by the kernel")]
+    QuietNotSupported,
 }
 
 #[test]
@@ -159,6 +161,8 @@ where
     PathBeneath(#[from] PathBeneathError),
     #[error(transparent)]
     Access(#[from] AccessError<T>),
+    #[error("quiet flag not supported")]
+    QuietNotSupported,
 }
 
 #[derive(Debug, Error)]

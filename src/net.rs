@@ -87,6 +87,10 @@ impl PrivateHandledAccess for AccessNet {
         Ok(())
     }
 
+    fn ruleset_quiet_access(ruleset: &mut Ruleset, access: BitFlags<Self>) {
+        ruleset.requested_quiet_net |= access;
+    }
+
     fn into_add_rules_error(error: AddRuleError<Self>) -> AddRulesError {
         AddRulesError::Net(error)
     }
@@ -114,6 +118,7 @@ pub struct NetPort {
     port: u16,
     allowed_access: BitFlags<AccessNet>,
     compat_level: Option<CompatLevel>,
+    quiet: bool,
 }
 
 // If we need support for 32 or 64 ports, we'll add a new_32() or a new_64() method returning a
@@ -133,11 +138,16 @@ impl NetPort {
             port,
             allowed_access: access.into(),
             compat_level: None,
+            quiet: false,
         }
     }
 }
 
-impl Rule<AccessNet> for NetPort {}
+impl Rule<AccessNet> for NetPort {
+    fn set_quiet(self, quiet: bool) -> Self {
+        Self { quiet, ..self }
+    }
+}
 
 impl PrivateRule<AccessNet> for NetPort {
     const TYPE_ID: uapi::landlock_rule_type = uapi::landlock_rule_type_LANDLOCK_RULE_NET_PORT;
@@ -161,6 +171,14 @@ impl PrivateRule<AccessNet> for NetPort {
                 incompatible: self.allowed_access & !ruleset.requested_handled_net,
             }
             .into())
+        }
+    }
+
+    fn add_rule_flags(&self) -> u32 {
+        if self.quiet {
+            uapi::LANDLOCK_ADD_RULE_QUIET
+        } else {
+            0
         }
     }
 }
@@ -195,12 +213,23 @@ impl TryCompat<AccessNet> for NetPort {
     where
         L: Into<CompatLevel>,
     {
+        let level = self.tailored_compat_level(parent_level);
+        if self.quiet {
+            let quiet_unsupported = abi < ABI::V10;
+            if quiet_unsupported {
+                self.quiet = false;
+                match level {
+                    CompatLevel::BestEffort => compat_state.update(CompatState::No),
+                    CompatLevel::SoftRequirement => compat_state.update(CompatState::Dummy),
+                    CompatLevel::HardRequirement => return Err(CompatError::QuietNotSupported),
+                }
+            }
+            if self.allowed_access.is_empty() {
+                return Ok((!quiet_unsupported).then_some(self));
+            }
+        }
         // Checks with our own compatibility level, if any.
-        self.allowed_access = match self.allowed_access.try_compat(
-            abi,
-            self.tailored_compat_level(parent_level),
-            compat_state,
-        )? {
+        self.allowed_access = match self.allowed_access.try_compat(abi, level, compat_state)? {
             Some(a) => a,
             None => return Ok(None),
         };

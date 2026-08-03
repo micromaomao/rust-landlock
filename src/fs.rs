@@ -199,6 +199,13 @@ impl PrivateHandledAccess for AccessFs {
         Ok(())
     }
 
+    fn ruleset_quiet_access(ruleset: &mut Ruleset, access: BitFlags<Self>)
+    where
+        Self: Access,
+    {
+        ruleset.requested_quiet_fs |= access;
+    }
+
     fn into_add_rules_error(error: AddRuleError<Self>) -> AddRulesError {
         AddRulesError::Fs(error)
     }
@@ -246,6 +253,7 @@ pub struct PathBeneath<F> {
     parent_fd: F,
     allowed_access: BitFlags<AccessFs>,
     compat_level: Option<CompatLevel>,
+    quiet: bool,
 }
 
 impl<F> PathBeneath<F>
@@ -265,6 +273,7 @@ where
             parent_fd: parent,
             allowed_access: access.into(),
             compat_level: None,
+            quiet: false,
         }
     }
 }
@@ -282,12 +291,25 @@ where
     where
         L: Into<CompatLevel>,
     {
+        let level = self.tailored_compat_level(parent_level);
+        if self.quiet {
+            let quiet_unsupported = abi < ABI::V10;
+            if quiet_unsupported {
+                self.quiet = false;
+                match level {
+                    CompatLevel::BestEffort => compat_state.update(CompatState::No),
+                    CompatLevel::SoftRequirement => compat_state.update(CompatState::Dummy),
+                    CompatLevel::HardRequirement => return Err(CompatError::QuietNotSupported),
+                }
+            }
+            // try_compat will return error if allowed_access is empty, but we do allow it for quiet
+            // rules.
+            if self.allowed_access.is_empty() {
+                return Ok((!quiet_unsupported).then_some(self));
+            }
+        }
         // Checks with our own compatibility level, if any.
-        self.allowed_access = match self.allowed_access.try_compat(
-            abi,
-            self.tailored_compat_level(parent_level),
-            compat_state,
-        )? {
+        self.allowed_access = match self.allowed_access.try_compat(abi, level, compat_state)? {
             Some(a) => a,
             None => return Ok(None),
         };
@@ -446,7 +468,14 @@ fn path_beneath_compatibility() {
 
 // It is useful for documentation generation to explicitely implement Rule for every types, instead
 // of doing it generically.
-impl<F> Rule<AccessFs> for PathBeneath<F> where F: AsFd {}
+impl<F> Rule<AccessFs> for PathBeneath<F>
+where
+    F: AsFd,
+{
+    fn set_quiet(self, quiet: bool) -> Self {
+        Self { quiet, ..self }
+    }
+}
 
 impl<F> PrivateRule<AccessFs> for PathBeneath<F>
 where
@@ -473,6 +502,14 @@ where
                 incompatible: self.allowed_access & !ruleset.requested_handled_fs,
             }
             .into())
+        }
+    }
+
+    fn add_rule_flags(&self) -> u32 {
+        if self.quiet {
+            uapi::LANDLOCK_ADD_RULE_QUIET
+        } else {
+            0
         }
     }
 }

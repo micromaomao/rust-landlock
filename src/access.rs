@@ -25,6 +25,10 @@ pub trait PrivateHandledAccess: HandledAccess {
     where
         Self: Access;
 
+    fn ruleset_quiet_access(ruleset: &mut Ruleset, access: BitFlags<Self>)
+    where
+        Self: Access;
+
     fn into_add_rules_error(error: AddRuleError<Self>) -> AddRulesError
     where
         Self: Access;
