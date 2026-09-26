@@ -57,7 +57,7 @@ impl Access for AccessNet {
     fn from_all(abi: ABI) -> BitFlags<Self> {
         match abi {
             ABI::Unsupported | ABI::V1 | ABI::V2 | ABI::V3 => BitFlags::EMPTY,
-            ABI::V4 | ABI::V5 | ABI::V6 | ABI::V7 | ABI::V8 | ABI::V9 => {
+            ABI::V4 | ABI::V5 | ABI::V6 | ABI::V7 | ABI::V8 | ABI::V9 | ABI::V10 => {
                 AccessNet::BindTcp | AccessNet::ConnectTcp
             }
         }
@@ -242,6 +242,28 @@ impl TryCompat<AccessNet> for NetPort {
     ) -> Result<CompatResult<AccessNet>, CompatError<AccessNet>> {
         Ok(CompatResult::Full)
     }
+}
+
+#[test]
+fn quiet_only_net_port_compatibility() {
+    use crate::*;
+
+    let mut state = CompatState::Init;
+    let rule = NetPort::new(80, BitFlags::<AccessNet>::EMPTY)
+        .set_quiet(true)
+        .try_compat(ABI::V10, CompatLevel::BestEffort, &mut state)
+        .unwrap()
+        .unwrap();
+    assert_eq!(rule.add_rule_flags(), uapi::LANDLOCK_ADD_RULE_QUIET);
+    assert_eq!(state, CompatState::Full);
+
+    let mut state = CompatState::Full;
+    assert!(NetPort::new(80, BitFlags::<AccessNet>::EMPTY)
+        .set_quiet(true)
+        .try_compat(ABI::V9, CompatLevel::BestEffort, &mut state)
+        .unwrap()
+        .is_none());
+    assert_eq!(state, CompatState::Partial);
 }
 
 impl OptionCompatLevelMut for NetPort {

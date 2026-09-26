@@ -79,6 +79,8 @@ pub enum ABI {
     /// Ninth Landlock ABI, introduced with
     /// [Linux 7.1](https://git.kernel.org/stable/c/b8f82cb0d84d00c04cdbdce42f67df71b8507e8b).
     V9 = 9,
+    /// Tenth Landlock ABI, introducing quiet rules and quiet access masks.
+    V10 = 10,
 }
 
 // ABI should not be dynamically created (in other crates) according to the running kernel
@@ -107,7 +109,8 @@ impl From<i32> for ABI {
             7 => ABI::V7,
             8 => ABI::V8,
             // Returns the greatest known ABI.
-            _ => ABI::V9,
+            9 => ABI::V9,
+            _ => ABI::V10,
         }
     }
 }
@@ -357,7 +360,7 @@ pub enum CompatState {
 }
 
 impl CompatState {
-    fn update(&mut self, other: Self) {
+    pub(crate) fn update(&mut self, other: Self) {
         *self = match (*self, other) {
             (CompatState::Init, other) => other,
             (CompatState::Dummy, _) => CompatState::Dummy,

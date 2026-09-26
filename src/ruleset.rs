@@ -22,9 +22,9 @@ pub trait Rule<T>: PrivateRule<T>
 where
     T: HandledAccess,
 {
+    /// Marks the rule's object as quiet for accesses selected by the ruleset's quiet mask.
+    /// Supported since Landlock ABI 10.
     fn set_quiet(self, quiet: bool) -> Self;
-}
-
 }
 
 // PrivateRule is not public outside this crate.
@@ -380,9 +380,13 @@ pub trait RulesetAttr: Sized + AsMut<Ruleset> + Compatible {
     where
         T: Into<BitFlags<U>>,
         U: HandledAccess + PrivateHandledAccess,
+    {
+        U::ruleset_handle_access(self.as_mut(), access.into())?;
         Ok(self)
     }
 
+    /// Suppresses denial logs for these handled accesses on objects marked quiet by a rule.
+    /// Supported since Landlock ABI 10; compatibility follows the current ruleset level.
     fn quiet_access<T, U>(mut self, access: T) -> Result<Self, RulesetError>
     where
         T: Into<BitFlags<U>>,
@@ -450,6 +454,83 @@ pub trait RulesetAttr: Sized + AsMut<Ruleset> + Compatible {
 impl RulesetAttr for Ruleset {}
 
 impl RulesetAttr for &mut Ruleset {}
+
+#[test]
+fn quiet_compatibility() {
+    use crate::*;
+
+    let ruleset = Ruleset::from(ABI::V9)
+        .handle_access(AccessFs::ReadFile)
+        .unwrap()
+        .handle_access(AccessNet::BindTcp)
+        .unwrap()
+        .scope(Scope::Signal)
+        .unwrap()
+        .quiet_access(AccessFs::ReadFile)
+        .unwrap()
+        .quiet_access(AccessNet::BindTcp)
+        .unwrap()
+        .quiet_scope(Scope::Signal)
+        .unwrap();
+    assert_eq!(ruleset.compat.state, CompatState::Partial);
+    assert_eq!(ruleset.requested_quiet_fs, AccessFs::ReadFile);
+    assert_eq!(ruleset.requested_quiet_net, AccessNet::BindTcp);
+    assert_eq!(ruleset.requested_quiet_scoped, Scope::Signal);
+    assert_eq!(ruleset.quiet_masks(), (0, 0, 0));
+
+    let ruleset = Ruleset::from(ABI::V10)
+        .handle_access(AccessFs::ReadFile)
+        .unwrap()
+        .handle_access(AccessNet::BindTcp)
+        .unwrap()
+        .scope(Scope::Signal)
+        .unwrap()
+        .quiet_access(AccessFs::ReadFile)
+        .unwrap()
+        .quiet_access(AccessNet::BindTcp)
+        .unwrap()
+        .quiet_scope(Scope::Signal)
+        .unwrap();
+    assert_eq!(ruleset.compat.state, CompatState::Full);
+    assert_eq!(ruleset.requested_quiet_fs, AccessFs::ReadFile);
+    assert_eq!(ruleset.requested_quiet_net, AccessNet::BindTcp);
+    assert_eq!(ruleset.requested_quiet_scoped, Scope::Signal);
+    assert_eq!(
+        ruleset.quiet_masks(),
+        (
+            AccessFs::ReadFile as u64,
+            AccessNet::BindTcp as u64,
+            Scope::Signal as u64,
+        )
+    );
+
+    let ruleset = Ruleset::from(ABI::V9)
+        .handle_access(AccessFs::ReadFile)
+        .unwrap()
+        .set_compatibility(CompatLevel::SoftRequirement)
+        .quiet_access(AccessFs::ReadFile)
+        .unwrap();
+    assert_eq!(ruleset.compat.state, CompatState::Dummy);
+
+    assert!(matches!(
+        Ruleset::from(ABI::V9)
+            .set_compatibility(CompatLevel::HardRequirement)
+            .quiet_access(AccessFs::ReadFile),
+        Err(RulesetError::QuietNotSupported)
+    ));
+    assert!(matches!(
+        Ruleset::from(ABI::V9)
+            .set_compatibility(CompatLevel::HardRequirement)
+            .quiet_access(AccessNet::BindTcp),
+        Err(RulesetError::QuietNotSupported)
+    ));
+    assert!(matches!(
+        Ruleset::from(ABI::V9)
+            .set_compatibility(CompatLevel::HardRequirement)
+            .quiet_scope(Scope::Signal),
+        Err(RulesetError::QuietNotSupported)
+    ));
+}
 
 #[test]
 fn ruleset_attr() {

@@ -122,7 +122,8 @@ impl AccessFs {
             | ABI::V6
             | ABI::V7
             | ABI::V8
-            | ABI::V9 => {
+            | ABI::V9
+            | ABI::V10 => {
                 make_bitflags!(AccessFs::{
                     Execute
                     | ReadFile
@@ -153,7 +154,7 @@ impl AccessFs {
             ABI::V2 => Self::from_write(ABI::V1) | AccessFs::Refer,
             ABI::V3 | ABI::V4 => Self::from_write(ABI::V2) | AccessFs::Truncate,
             ABI::V5 | ABI::V6 | ABI::V7 | ABI::V8 => Self::from_write(ABI::V4) | AccessFs::IoctlDev,
-            ABI::V9 => Self::from_write(ABI::V8) | AccessFs::ResolveUnix,
+            ABI::V9 | ABI::V10 => Self::from_write(ABI::V8) | AccessFs::ResolveUnix,
         }
     }
 
@@ -341,6 +342,40 @@ where
             Ok(CompatResult::Full)
         }
     }
+}
+
+#[test]
+fn quiet_only_path_compatibility() {
+    use crate::*;
+
+    let mut state = CompatState::Init;
+    let rule = PathBeneath::new(PathFd::new("/").unwrap(), BitFlags::<AccessFs>::EMPTY)
+        .set_quiet(true)
+        .try_compat(ABI::V10, CompatLevel::BestEffort, &mut state)
+        .unwrap()
+        .unwrap();
+    assert_eq!(rule.add_rule_flags(), uapi::LANDLOCK_ADD_RULE_QUIET);
+    assert_eq!(state, CompatState::Full);
+
+    let mut state = CompatState::Full;
+    assert!(
+        PathBeneath::new(PathFd::new("/").unwrap(), BitFlags::<AccessFs>::EMPTY)
+            .set_quiet(true)
+            .try_compat(ABI::V9, CompatLevel::BestEffort, &mut state)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(state, CompatState::Partial);
+
+    let mut state = CompatState::Full;
+    assert!(
+        PathBeneath::new(PathFd::new("/").unwrap(), BitFlags::<AccessFs>::EMPTY)
+            .set_quiet(true)
+            .try_compat(ABI::V9, CompatLevel::SoftRequirement, &mut state)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(state, CompatState::Dummy);
 }
 
 #[test]
